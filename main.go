@@ -5,7 +5,6 @@ import (
 	"github.com/gofiber/fiber"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -27,11 +26,16 @@ const (
 	FilterNoDir   EnumFilter = 2
 )
 
-func ReadDir(
-	path string, keyword string,
-	ordering EnumOrdering, orderBy EnumOrderBy, filter EnumFilter,
-) ([]FileInfo, error) {
-	f, err := os.Open(path)
+type Query struct {
+	Path     string
+	Ordering EnumOrdering
+	OrderBy  EnumOrderBy
+	Filter   EnumFilter
+	Keyword  string
+}
+
+func ReadDir(query Query) ([]FileInfo, error) {
+	f, err := os.Open(query.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -42,8 +46,8 @@ func ReadDir(
 	var infos = make(FileInfoSlice, 0)
 
 	for i, file := range files {
-		if keyword != "" {
-			if !strings.Contains(file.Name(), keyword) {
+		if query.Keyword != "" {
+			if !strings.Contains(file.Name(), query.Keyword) {
 				continue
 			}
 			if i > 100 {
@@ -52,11 +56,11 @@ func ReadDir(
 			}
 		}
 
-		if FilterDirOnly == filter {
+		if FilterDirOnly == query.Filter {
 			if !file.IsDir() {
 				continue
 			}
-		} else if FilterNoDir == filter {
+		} else if FilterNoDir == query.Filter {
 			if file.IsDir() {
 				continue
 			}
@@ -66,14 +70,14 @@ func ReadDir(
 		infos = append(infos, FileInfo{file.Name(), file.Size(), file.IsDir(), file.ModTime()})
 	}
 
-	if orderBy != OrderByNone {
+	if query.OrderBy != OrderByNone {
 		sort.Slice(infos, func(i, j int) (b bool) {
-			if orderBy == OrderBySize {
+			if query.OrderBy == OrderBySize {
 				b = infos.LessBySize(i, j)
-			} else if orderBy == OrderByUpdateTs {
+			} else if query.OrderBy == OrderByUpdateTs {
 				b = infos.LessByModTime(i, j)
 			}
-			if ordering == OrderingDesc {
+			if query.Ordering == OrderingDesc {
 				b = !b
 			}
 			return
@@ -84,38 +88,27 @@ func ReadDir(
 }
 
 func viewGetPath(c *fiber.Ctx) {
-	//type Query struct {
-	//	Path string
-	//	Ordering EnumOrdering
-	//	OrderBy EnumOrderBy
-	//	keyword string
-	//}
-
-	path := c.Query("path")
-	keyword := c.Query("keyword")
-	ordering, err := strconv.Atoi(c.Query("ordering"))
-	orderingEnum := EnumOrdering(ordering)
-	orderBy, err := strconv.Atoi(c.Query("orderBy"))
-	orderByEnum := EnumOrderBy(orderBy)
-	filter, err := strconv.Atoi(c.Query("filter"))
-	filterEnum := EnumFilter(filter)
-
-	fmt.Printf(
-		"path: '%s', keyword: '%s', ordering %d, orderBy %d filter: %d\n",
-		path, keyword, ordering, orderBy, filterEnum)
-
-	if path == "" {
-		path = GetBasePath()
+	query := Query{}
+	err := c.QueryParser(&query)
+	if err != nil {
+		c.Status(500).Send(fmt.Sprintf("query parse fail: %v", err))
+		return
 	}
-	if !strings.HasPrefix(path, defaultBasePath) {
+
+	fmt.Printf("query: %v\n", query)
+
+	if query.Path == "" {
+		query.Path = GetBasePath()
+	}
+	if !strings.HasPrefix(query.Path, defaultBasePath) {
 		c.Status(500).Send(fmt.Sprintf("path must start with %s", defaultBasePath))
 		return
 	}
-	if strings.Contains(path, "/../") {
+	if strings.Contains(query.Path, "/../") {
 		c.Status(500).Send("别闹了")
 		return
 	}
-	dir, err := ReadDir(path, keyword, orderingEnum, orderByEnum, filterEnum)
+	dir, err := ReadDir(query)
 	if err != nil {
 		c.Status(500).JSON(&err)
 		return
